@@ -296,6 +296,19 @@ Replace your API keys.
 
 > **Note:** Depending on your usecase, deep research report quality can be enhanced by enabling searching across academic research papers. We use Serper for this. If you want to use paper search, follow the steps in the [Customization guide](docs/source/customization/tools-and-sources.md#disabling-a-tool) to enable it.
 
+
+#### RUN:AI Helm Chart Deployment Variables
+
+Storing API keys as a generic secret in a RUN:AI cluster will cause them to be prepended with `genericsecret-`. 
+When storing API keys in the recommended `aiq-credentials` generic secret, the AI-Q helm chart will need to access them
+via `genericsecret-aiq-credentials`. Use the following YAML configuration option to achieve this:
+
+```yaml
+aiq:
+  sharedSecrets:
+    targetSecretName: "genericsecret-aiq-credentials"
+```
+
 ## Configuration Files
 
 The `configs/` directory holds YAML workflow configs that define agents, tools, LLMs, and routing. Use the one that matches your run mode and data sources:

@@ -125,17 +125,9 @@ aiq:
           \ -d aiq_jobs; do\n  sleep 2\ndone\necho \"Running init script...\"\npsql\
           \ -h aiq-postgres -U $(DB_USER_NAME) -d aiq_jobs -v db_user=$(DB_USER_NAME)\
           \ -f /db-init/init.sql\n"
-        env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: aiq-credentials
-              key: DB_USER_PASSWORD
-        - name: DB_USER_NAME
-          valueFrom:
-            secretKeyRef:
-              name: aiq-credentials
-              key: DB_USER_NAME
+        secretEnv:
+          PGPASSWORD: DB_USER_PASSWORD
+          DB_USER_NAME: DB_USER_NAME
         volumeMounts:
         - name: postgres-init
           mountPath: /db-init

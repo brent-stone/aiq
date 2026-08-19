@@ -88,7 +88,20 @@ spec:
       {{- end }}
       {{- with $appConfig.initContainers }}
       initContainers:
-        {{- toYaml . | nindent 6 }}
+      {{- range . }}
+        {{- $initContainer := deepCopy . }}
+        {{- $secretEnv := $initContainer.secretEnv | default dict }}
+        {{- $_ := unset $initContainer "secretEnv" }}
+        {{- if $secretEnv }}
+        {{- $env := $initContainer.env | default list }}
+        {{- $secretName := $.Values.sharedSecrets.targetSecretName | default (printf "%s-credentials" $.Values.project.name) }}
+        {{- range $name, $key := $secretEnv }}
+        {{- $env = append $env (dict "name" $name "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "key" $key))) }}
+        {{- end }}
+        {{- $_ := set $initContainer "env" $env }}
+        {{- end }}
+        {{- toYaml (list $initContainer) | nindent 6 }}
+      {{- end }}
       {{- end }}
       containers:
       - name: {{ $appName }}

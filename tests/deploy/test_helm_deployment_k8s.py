@@ -137,6 +137,36 @@ def test_default_chart_renders_referenced_configmaps_and_uses_user_supplied_secr
     assert "aiq-credentials" not in rendered_secrets
 
 
+def test_target_secret_name_applies_to_init_container_secret_env(tmp_path: Path):
+    child_values = yaml.safe_load((CHART_PATH / "values.yaml").read_text(encoding="utf-8"))["aiq"]
+    child_values["sharedSecrets"]["targetSecretName"] = "custom-credentials"
+    values = {"aiq": child_values}
+    values_file = tmp_path / "custom-secret-name.yaml"
+    values_file.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    manifests = render_chart("-f", str(values_file))
+    backend_deployment = next(
+        manifest
+        for manifest in manifests
+        if manifest.get("kind") == "Deployment" and manifest["metadata"]["name"] == "aiq-backend"
+    )
+    db_init = next(
+        container
+        for container in backend_deployment["spec"]["template"]["spec"]["initContainers"]
+        if container["name"] == "db-init"
+    )
+
+    secret_refs = {
+        item["name"]: item["valueFrom"]["secretKeyRef"]
+        for item in db_init["env"]
+        if "secretKeyRef" in item.get("valueFrom", {})
+    }
+    assert secret_refs == {
+        "DB_USER_NAME": {"name": "custom-credentials", "key": "DB_USER_NAME"},
+        "PGPASSWORD": {"name": "custom-credentials", "key": "DB_USER_PASSWORD"},
+    }
+
+
 def test_all_namespaced_resources_honor_release_namespace():
     """Regression test for #290: resources must use the Helm release namespace
     (``helm install -n <ns>``) instead of a hardcoded ``ns-aiq``, so ``helm

@@ -83,6 +83,7 @@ bootstrap:
 sharedSecrets:
   enabled: false  # Enable to use shared secrets across all apps
   name: ""  # Auto-generated: {project.name}-shared-secrets
+  # RUN:AI operators should set this to "genericsecret-aiq-credentials".
   targetSecretName: ""  # Auto-generated: {project.name}-credentials
   refreshInterval: "60m"
 
