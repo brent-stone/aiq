@@ -100,7 +100,6 @@ Configured through `ShallowResearchAgentConfig` (NeMo Agent Toolkit type name: `
 | `tools` | `list[FunctionRef \| FunctionGroupRef]` | `[]` | Tools available for research (web search, document search, etc.) |
 | `max_llm_turns` | `int` | `10` | Maximum LLM interaction turns |
 | `max_tool_iterations` | `int` | `5` | Maximum tool calls before forcing synthesis |
-| `verbose` | `bool` | `false` | Enable verbose logging |
 
 **Example YAML:**
 
@@ -113,7 +112,6 @@ functions:
       - web_search_tool
     max_llm_turns: 10
     max_tool_iterations: 5
-    verbose: true
 ```
 
 ## Prompt Template
