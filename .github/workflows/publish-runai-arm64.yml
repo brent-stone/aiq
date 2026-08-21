@@ -1,0 +1,313 @@
+name: Publish RUN:AI ARM64 Artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_number }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  prepare:
+    name: Prepare immutable release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      registry: ${{ steps.metadata.outputs.registry }}
+      backend_image: ${{ steps.metadata.outputs.backend_image }}
+      frontend_image: ${{ steps.metadata.outputs.frontend_image }}
+    steps:
+      - name: Derive release metadata
+        id: metadata
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          release_tag="runai-arm64-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          registry="ghcr.io/$owner"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+          echo "backend_image=$registry/aiq-agent:$release_tag" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=$registry/aiq-frontend:$release_tag" >> "$GITHUB_OUTPUT"
+
+  build-images:
+    name: Build ARM64 ${{ matrix.image }}
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: aiq-agent
+            context: .
+            dockerfile: deploy/Dockerfile
+            target: release
+          - image: aiq-frontend
+            context: frontends/ui
+            dockerfile: frontends/ui/deploy/Dockerfile
+            target: ""
+    steps:
+      - name: Checkout AI-Q source
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish ARM64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/arm64
+          push: true
+          tags: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}:${{ needs.prepare.outputs.release_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.release_tag }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=${{ matrix.image }}-arm64
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-arm64
+          provenance: mode=max
+          sbom: true
+
+  verify-images:
+    name: Verify native ARM64 image runtimes
+    needs:
+      - prepare
+      - build-images
+    runs-on: ubuntu-24.04-arm
+    env:
+      BACKEND_IMAGE: ${{ needs.prepare.outputs.backend_image }}
+      FRONTEND_IMAGE: ${{ needs.prepare.outputs.frontend_image }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published manifests contain Linux ARM64
+        run: |
+          docker buildx imagetools inspect "$BACKEND_IMAGE" | tee backend-manifest.txt
+          grep -F "linux/arm64" backend-manifest.txt
+          docker buildx imagetools inspect "$FRONTEND_IMAGE" | tee frontend-manifest.txt
+          grep -F "linux/arm64" frontend-manifest.txt
+
+      - name: Smoke test backend Python and API import
+        run: |
+          docker run --rm --entrypoint /app/.venv/bin/python "$BACKEND_IMAGE" \
+            -c "import platform; import aiq_api; assert platform.machine() in ('aarch64', 'arm64'); print(platform.machine())"
+
+      - name: Smoke test frontend Node architecture
+        run: |
+          docker run --rm --entrypoint node "$FRONTEND_IMAGE" \
+            -e "if (process.arch !== 'arm64') process.exit(1); console.log(process.arch)"
+
+  package-chart:
+    name: Verify images and package customized Helm chart
+    needs:
+      - prepare
+      - verify-images
+    runs-on: ubuntu-latest
+    env:
+      BACKEND_IMAGE: ${{ needs.prepare.outputs.backend_image }}
+      FRONTEND_IMAGE: ${{ needs.prepare.outputs.frontend_image }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+    steps:
+      - name: Checkout AI-Q source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install release helper dependency
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+
+      - name: Set up Docker Buildx for anonymous inspection
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Verify anonymous access to published ARM64 images
+        run: |
+          docker buildx imagetools inspect "$BACKEND_IMAGE" | tee backend-public-manifest.txt
+          grep -F "linux/arm64" backend-public-manifest.txt
+          docker buildx imagetools inspect "$FRONTEND_IMAGE" | tee frontend-public-manifest.txt
+          grep -F "linux/arm64" frontend-public-manifest.txt
+
+      - name: Prepare release workspace and customized chart
+        id: workspace
+        run: |
+          stage_dir="$RUNNER_TEMP/aiq-arm64-stage"
+          release_dir="$RUNNER_TEMP/aiq-arm64-release"
+          mkdir -p "$release_dir"
+          python scripts/prepare_runai_arm64_release.py \
+            --source-helm-dir deploy/helm \
+            --output-dir "$stage_dir" \
+            --backend-repository ghcr.io/brent-stone/aiq-agent \
+            --frontend-repository ghcr.io/brent-stone/aiq-frontend \
+            --tag "$RELEASE_TAG"
+          echo "stage_dir=$stage_dir" >> "$GITHUB_OUTPUT"
+          echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve, lint, and render Helm chart
+        env:
+          STAGE_DIR: ${{ steps.workspace.outputs.stage_dir }}
+          RELEASE_DIR: ${{ steps.workspace.outputs.release_dir }}
+        run: |
+          chart_dir="$STAGE_DIR/deployment-k8s"
+          values_file="$STAGE_DIR/runai-ai-applications-values.yaml"
+          helm dependency build "$chart_dir"
+          helm lint "$chart_dir" -f "$values_file"
+          helm template aiq "$chart_dir" -f "$values_file" > "$RELEASE_DIR/rendered.yaml"
+
+      - name: Verify rendered RUN:AI deployment contract
+        env:
+          RELEASE_DIR: ${{ steps.workspace.outputs.release_dir }}
+        run: |
+          python - "$RELEASE_DIR/rendered.yaml" "$BACKEND_IMAGE" "$FRONTEND_IMAGE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          manifests = [item for item in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if item]
+          deployments = {
+              item["metadata"]["name"]: item
+              for item in manifests
+              if item.get("kind") == "Deployment"
+          }
+          assert {"aiq-backend", "aiq-frontend", "aiq-postgres"} <= deployments.keys()
+          assert deployments["aiq-backend"]["spec"]["template"]["spec"]["containers"][0]["image"] == sys.argv[2]
+          assert deployments["aiq-frontend"]["spec"]["template"]["spec"]["containers"][0]["image"] == sys.argv[3]
+
+          backend_pod = deployments["aiq-backend"]["spec"]["template"]["spec"]
+          assert "db-init" in {item["name"] for item in backend_pod["initContainers"]}
+
+          postgres = deployments["aiq-postgres"]["spec"]["template"]["spec"]["containers"][0]
+          assert "/var/lib/postgresql/data" in {item["mountPath"] for item in postgres["volumeMounts"]}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for child in value.values():
+                      yield from walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from walk(child)
+
+          secret_names = {
+              node["secretKeyRef"]["name"]
+              for deployment in deployments.values()
+              for node in walk(deployment)
+              if isinstance(node.get("secretKeyRef"), dict)
+          }
+          assert secret_names == {"genericsecret-aiq-credentials"}
+          PY
+
+      - name: Package verified Helm release assets
+        env:
+          STAGE_DIR: ${{ steps.workspace.outputs.stage_dir }}
+          RELEASE_DIR: ${{ steps.workspace.outputs.release_dir }}
+        run: |
+          helm package "$STAGE_DIR/deployment-k8s" --destination "$RELEASE_DIR"
+          cp "$STAGE_DIR/runai-ai-applications-values.yaml" "$RELEASE_DIR/"
+          cd "$RELEASE_DIR"
+          test -f aiq2-web-2.2.0.tgz
+          sha256sum aiq2-web-2.2.0.tgz runai-ai-applications-values.yaml rendered.yaml > SHA256SUMS
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: runai-arm64-release
+          path: |
+            ${{ steps.workspace.outputs.release_dir }}/aiq2-web-2.2.0.tgz
+            ${{ steps.workspace.outputs.release_dir }}/runai-ai-applications-values.yaml
+            ${{ steps.workspace.outputs.release_dir }}/rendered.yaml
+            ${{ steps.workspace.outputs.release_dir }}/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: Publish public GitHub release
+    needs:
+      - prepare
+      - package-chart
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      BACKEND_IMAGE: ${{ needs.prepare.outputs.backend_image }}
+      FRONTEND_IMAGE: ${{ needs.prepare.outputs.frontend_image }}
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v5
+        with:
+          name: runai-arm64-release
+          path: release-assets
+
+      - name: Create release notes
+        run: |
+          notes="release-assets/release-notes.md"
+          {
+            echo "# RUN:AI ARM64 AI-Q release $RELEASE_TAG"
+            echo
+            echo "Built natively for linux/arm64 for NVIDIA DGX GB300 testing."
+            echo
+            echo "## Published images"
+            echo
+            echo "- \`$BACKEND_IMAGE\`"
+            echo "- \`$FRONTEND_IMAGE\`"
+            echo
+            echo "## Helm chart"
+            echo
+            echo "- \`aiq2-web-2.2.0.tgz\`"
+            echo "- Apply \`runai-ai-applications-values.yaml\` in the RUN:AI AI Applications configuration field."
+          } > "$notes"
+
+      - name: Publish public GitHub release
+        run: |
+          gh release create "$RELEASE_TAG" \
+            release-assets/aiq2-web-2.2.0.tgz \
+            release-assets/runai-ai-applications-values.yaml \
+            release-assets/rendered.yaml \
+            release-assets/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "RUN:AI ARM64 AI-Q $RELEASE_TAG" \
+            --notes-file release-assets/release-notes.md \
+            --latest=false
+
+      - name: Publish RUN:AI deployment URLs
+        run: |
+          release_url="https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+          chart_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/aiq2-web-2.2.0.tgz"
+          {
+            echo "## RUN:AI ARM64 release published"
+            echo
+            echo "- Release: $release_url"
+            echo "- Helm chart: $chart_url"
+            echo "- Backend: $BACKEND_IMAGE"
+            echo "- Frontend: $FRONTEND_IMAGE"
+          } >> "$GITHUB_STEP_SUMMARY"
