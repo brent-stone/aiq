@@ -1,0 +1,21 @@
+# RUN:AI overrides for the NVIDIA AI-Q 2.2 web deployment chart.
+aiq:
+  sharedSecrets:
+    enabled: true
+    autoMount: true
+    targetSecretName: genericsecret-aiq-credentials
+
+  apps:
+    postgres:
+      persistence:
+        - name: aiq-postgres-data
+          accessModes:
+            - ReadWriteOnce
+          size: 10Gi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: aiq-postgres-data
+      volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
