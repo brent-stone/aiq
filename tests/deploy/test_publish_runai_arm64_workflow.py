@@ -38,6 +38,7 @@ def test_workflow_builds_both_images_natively_with_immutable_tags():
     workflow = load_workflow()
 
     assert "workflow_dispatch" in workflow["on"]
+    assert workflow["on"]["push"]["branches"] == ["codex/runai-arm64-release"]
     assert workflow["permissions"] == {"contents": "write", "packages": "write"}
 
     build = workflow["jobs"]["build-images"]

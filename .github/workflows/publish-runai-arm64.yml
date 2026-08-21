@@ -2,6 +2,9 @@ name: Publish RUN:AI ARM64 Artifacts
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/runai-arm64-release
 
 permissions:
   contents: write
