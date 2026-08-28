@@ -18,7 +18,14 @@ RUNAI_OVERRIDES = {
             "targetSecretName": "genericsecret-aiq-credentials",
         },
         "apps": {
-            "backend": {"ingress": {"enabled": False}},
+            "backend": {
+                "env": {
+                    "NAT_JOB_STORE_POOL_PRE_PING": "true",
+                    "NAT_JOB_STORE_POOL_RECYCLE": "1800",
+                    "NAT_JOB_STORE_SUBMIT_TIMEOUT": "60",
+                },
+                "ingress": {"enabled": False},
+            },
             "frontend": {"ingress": {"enabled": False}},
             "postgres": {
                 "persistence": [

@@ -6,6 +6,11 @@ aiq:
     targetSecretName: genericsecret-aiq-credentials
 
   apps:
+    backend:
+      env:
+        NAT_JOB_STORE_POOL_PRE_PING: "true"
+        NAT_JOB_STORE_POOL_RECYCLE: "1800"
+        NAT_JOB_STORE_SUBMIT_TIMEOUT: "60"
     postgres:
       persistence:
         - name: aiq-postgres-data

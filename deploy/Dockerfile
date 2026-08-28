@@ -68,6 +68,7 @@ COPY configs/ ./configs/
 # Only copy runtime scripts from deploy/ — never copy the full directory
 # to avoid leaking .env, Helm charts, compose files, or other dev artifacts.
 COPY deploy/entrypoint.py deploy/start_web.py ./deploy/
+COPY scripts/apply_nat_hotfixes.py ./deploy/
 
 # Install dependencies using uv sync. We do NOT pass --no-dev: the workspace
 # source packages (tavily-web-search, exa-web-search, ...) and their runtime
@@ -77,6 +78,11 @@ COPY deploy/entrypoint.py deploy/start_web.py ./deploy/
 # frozen lock (still pinned, no re-resolve). TODO(deploy): move the source
 # packages to a dedicated non-dev group to keep test-only tooling out of the image.
 RUN uv sync --frozen --extra pii --extra s3
+
+# NAT 1.8.0 is still the latest published release. Apply the upstream fixes
+# merged as NVIDIA/NeMo-Agent-Toolkit PRs #2150 and #2159 until AI-Q can pin a
+# NAT release that includes them natively.
+RUN /app/.venv/bin/python /app/deploy/apply_nat_hotfixes.py
 
 # Install workspace packages (without CLI for base). The root install does not
 # need workspace source overrides because dependencies were synced above; avoid

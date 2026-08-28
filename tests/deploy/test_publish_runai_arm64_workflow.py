@@ -80,6 +80,9 @@ def test_workflow_smoke_tests_arm64_runtime_before_chart_packaging():
     assert "docker buildx imagetools inspect" in commands
     assert "--entrypoint /app/.venv/bin/python" in commands
     assert "import aiq_api" in commands
+    assert "NAT_JOB_STORE_SUBMIT_TIMEOUT" in commands
+    assert "_submit_timeout_seconds" in commands
+    assert "_apply_pool_env_defaults" in commands
     assert "platform.machine()" in commands
     assert "--entrypoint node" in commands
     assert "process.arch !== 'arm64'" in commands

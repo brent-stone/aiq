@@ -125,6 +125,11 @@ def test_generates_known_good_runai_overrides(source_helm_dir: tuple[Path, dict]
         "targetSecretName": "genericsecret-aiq-credentials",
     }
     assert aiq["apps"]["backend"]["ingress"] == {"enabled": False}
+    assert aiq["apps"]["backend"]["env"] == {
+        "NAT_JOB_STORE_POOL_PRE_PING": "true",
+        "NAT_JOB_STORE_POOL_RECYCLE": "1800",
+        "NAT_JOB_STORE_SUBMIT_TIMEOUT": "60",
+    }
     assert aiq["apps"]["frontend"]["ingress"] == {"enabled": False}
     assert aiq["apps"]["postgres"]["volumeMounts"] == [
         {"name": "postgres-data", "mountPath": "/var/lib/postgresql/data"}

@@ -119,6 +119,12 @@ jobs:
         run: |
           docker run --rm --entrypoint /app/.venv/bin/python "$BACKEND_IMAGE" \
             -c "import platform; import aiq_api; assert platform.machine() in ('aarch64', 'arm64'); print(platform.machine())"
+          docker run --rm \
+            -e NAT_JOB_STORE_SUBMIT_TIMEOUT=60 \
+            -e NAT_JOB_STORE_POOL_PRE_PING=true \
+            -e NAT_JOB_STORE_POOL_RECYCLE=1800 \
+            --entrypoint /app/.venv/bin/python "$BACKEND_IMAGE" \
+            -c "from nat.front_ends.fastapi.async_jobs.job_store import _apply_pool_env_defaults, _submit_timeout_seconds; assert _submit_timeout_seconds() == 60; assert _apply_pool_env_defaults({}) == {'pool_pre_ping': True, 'pool_recycle': 1800}; print('NAT PRs #2150 and #2159 active')"
 
       - name: Smoke test frontend Node architecture
         run: |
@@ -277,6 +283,7 @@ jobs:
             echo "# RUN:AI ARM64 AI-Q release $RELEASE_TAG"
             echo
             echo "Built natively for linux/arm64 for NVIDIA DGX GB300 testing."
+            echo "Includes the RUN:AI genericsecret compatibility patch and NeMo Agent Toolkit PR #2150/#2159 backports."
             echo
             echo "## Published images"
             echo
